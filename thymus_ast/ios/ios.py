@@ -157,7 +157,13 @@ def recursive_node_lookup(
             recursive_node_lookup(child, is_child, callback, **kwargs)
         callback(child, **kwargs)
 
-def lazy_provide_config(config: list[str], node: Root | Node, alignment: int) -> Generator[str, None, None]:
+def lazy_provide_config(
+        config: list[str],
+        node: Root | Node,
+        *,
+        alignment: int,
+        is_started: bool = False
+) -> Generator[str, None, None]:
     if not node.is_accessible:
         return
     try:
@@ -165,11 +171,8 @@ def lazy_provide_config(config: list[str], node: Root | Node, alignment: int) ->
         end: int = node.end + 1
         if node.name != 'root':
             begin = node.begin - 1
-        if config[end - 1].strip() != '!':
-            end -= 1
         depth: int = 0
         prev_spaces: int = 0
-        is_started: bool = False
         for pos in range(begin, end):
             if not config[pos]:
                 continue
