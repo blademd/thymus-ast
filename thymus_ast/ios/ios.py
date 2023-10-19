@@ -171,6 +171,10 @@ def lazy_provide_config(
         end: int = node.end + 1
         if node.name != 'root':
             begin = node.begin - 1
+        if config[end - 1].strip() != '!' and not config[end - 1].strip().startswith('exit-'):
+            # some sections don't stop at '!' or 'exit-...' lines
+            # they can overlap with the next section
+            end -= 1
         depth: int = 0
         prev_spaces: int = 0
         for pos in range(begin, end):
