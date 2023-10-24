@@ -28,6 +28,7 @@ class Node(TypedDict):
     path: str
     is_closed: bool
     is_inactive: bool
+    is_protected: bool
 
 
 def parser(data: list[str], path: str, *, delimiter='^', is_greedy=False) -> tuple[list[str], list[str]]:
@@ -186,36 +187,46 @@ def construct_tree(data: list[str], delimiter='^') -> Root:
     This function goes through the config file and constructs the tree every leaf of which is a config section.
     '''
     root = Root(name='root', version='', children=[], stubs=[], delimiter=delimiter)
-    current_node = root
-    section_regexp = r'^[^{]+{(?:\s##\s[^\n]+)?$'
+    current_node: Root | Node = root
+    section_regexp = r'^([^{]+)\s{'
+    stub_regexp = r'^([^;]+;)'
     for line in data:
         stripped = line.strip()
         if '{' in stripped and '}' not in stripped and ';' not in stripped:
-            if not re.match(section_regexp, stripped, re.I) and not re.search(r'is not defined$', stripped):
+            m = re.search(section_regexp, stripped)
+            if not m:
                 raise Exception('Incorrect configuration format detected.')
-            section_name = stripped[:-2]  # skip ' {' in the end of the line
+            section_name = m.group(1)
             node = Node(
                 name=section_name,
                 parent=current_node,
                 children=[],
                 stubs=[],
+                path='',
                 is_closed=False,
-                is_inactive=False
+                is_inactive=False,
+                is_protected=False,
             )
             node['path'] = construct_path(node, delimiter).replace(f'root{delimiter}', '')
-            if section_name.startswith('inactive:'):
+            if section_name.startswith('inactive: '):
                 node['is_inactive'] = True
+            elif section_name.startswith('protected: '):
+                node['is_protected'] = True
             current_node['children'].append(node)
             current_node = node
         elif '}' in stripped and '{' not in stripped and ';' not in stripped:
             current_node['is_closed'] = True
             current_node = current_node['parent']
         elif ';' in stripped and '{' not in stripped and '}' not in stripped:
-            current_node['stubs'].append(stripped)
-            if stripped.startswith('version ') and current_node['name'] == 'root':
-                parts = stripped.split()
-                if len(parts) >= 2 and parts[1][-1] == ';':
-                    root['version'] = parts[1][:-1]  # skip ';' in the end of version
+            m = re.search(stub_regexp, stripped)
+            if not m:
+                raise Exception('Incorrect configuration format detected. Wrong stub.')
+            stub = m.group(1)
+            current_node['stubs'].append(stub)
+            if stub.startswith('version ') and current_node['name'] == 'root':
+                parts = stub.split()
+                if len(parts) == 2:
+                    root['version'] = parts[1]
     return root
 
 def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
@@ -225,14 +236,14 @@ def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
         try:
             ifd, ifl = step.split('.')
         except ValueError:
-            return
+            return None
         if not ifl.isdigit():
-            return
+            return None
         step = ifd
         path.appendleft(f'unit {ifl}')
     children = node.get('children', [])
     if not children:
-        return
+        return None
     for child in children:
         name = child['name']
         name = name.lower()
@@ -244,14 +255,14 @@ def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
             return search_node(path, child)
     else:
         if not path:
-            return
+            return None
         extra_step = path.popleft()
         path.appendleft(f'{step} {extra_step}')
         return search_node(path, node)
 
 def compare_nodes(target: Root | Node, peer: Root | Node) -> Root | Node:
 
-    def copy_node(type: str, origin: Root | Node, parent: Root | Node) -> Node:
+    def copy_node(type: str, origin: Node, parent: Root | Node) -> Node:
         node: Node = copy(origin)
         node['type'] = type
         node['parent'] = parent
