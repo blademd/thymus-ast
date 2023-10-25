@@ -210,7 +210,7 @@ def construct_tree(data: list[str], delimiter='^') -> Root:
             node['path'] = construct_path(node, delimiter).replace(f'root{delimiter}', '')
             if section_name.startswith('inactive: '):
                 node['is_inactive'] = True
-            elif section_name.startswith('protected: '):
+            if 'protect: ' in section_name:
                 node['is_protected'] = True
             current_node['children'].append(node)
             current_node = node
