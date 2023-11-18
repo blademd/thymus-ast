@@ -20,6 +20,7 @@ class Root(TypedDict):
     stubs: list[str]
     delimiter: str
 
+
 class Node(TypedDict):
     name: str
     parent: Node | Root
@@ -49,7 +50,7 @@ def parser(data: list[str], path: str, *, delimiter='^', is_greedy=False) -> tup
                     container.append('}')
                     end = number
                 if is_greedy:
-                    del data[start:end + 1]
+                    del data[start : end + 1]
                 return container, params
             sections.pop()
         elif ';' in stripped and '{' not in stripped and '}' not in stripped:
@@ -61,6 +62,7 @@ def parser(data: list[str], path: str, *, delimiter='^', is_greedy=False) -> tup
                     start = number
                 container.append(stripped)
     return container, params
+
 
 def lazy_parser(data: Iterable[str], path: str, delimiter='^') -> Generator[str, None, None]:
     sections: list[str] = []
@@ -78,11 +80,9 @@ def lazy_parser(data: Iterable[str], path: str, delimiter='^') -> Generator[str,
             if stripped and not ('{' in stripped and '}' in stripped):
                 yield stripped
 
+
 def wc_parser(
-        data: list[str],
-        path: str,
-        pattern: str,
-        delimiter='^'
+    data: list[str], path: str, pattern: str, delimiter='^'
 ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     sections: list[str] = []
     container: dict[str, list[str]] = {}
@@ -107,15 +107,18 @@ def wc_parser(
                     return container, params
             sections.pop()
         elif ';' in stripped and '{' not in stripped and '}' not in stripped:
-            if len(sections) == plen + 1 and \
-                parts == [x[:-2] for x in sections[:plen]] and \
-                    re.match(pattern, sections[plen], re.I):
+            if (
+                len(sections) == plen + 1
+                and parts == [x[:-2] for x in sections[:plen]]
+                and re.match(pattern, sections[plen], re.I)
+            ):
                 key = sections[plen][:-2]
                 params[key].append(stripped)
         if stripped and parts == [x[:-2] for x in sections[:plen]]:
             if len(sections) > plen and re.match(pattern, sections[plen], re.I):
                 container[sections[plen][:-2]].append(stripped)
     return container, params
+
 
 def lazy_wc_parser(data: Iterable[str], path: str, pattern: str, delimiter='^') -> Generator[str, None, None]:
     sections: list[str] = []
@@ -133,6 +136,7 @@ def lazy_wc_parser(data: Iterable[str], path: str, pattern: str, delimiter='^') 
         if stripped and parts == [x[:-2] for x in sections[:plen]]:
             if len(sections) > plen and re.match(pattern, sections[plen][:-2], re.S):
                 yield stripped
+
 
 def provide_config(data: Iterable[str], block=' ' * 2) -> str:
     depth = 0
@@ -153,6 +157,7 @@ def provide_config(data: Iterable[str], block=' ' * 2) -> str:
         result += f'{prepend}{stripped}\n'
     return result
 
+
 def lazy_provide_config(data: Iterable[str], block=' ' * 2) -> Generator[str, None, None]:
     depth = 0
     flag = False
@@ -170,6 +175,7 @@ def lazy_provide_config(data: Iterable[str], block=' ' * 2) -> Generator[str, No
             flag = False
         yield f'{prepend}{stripped}'
 
+
 def construct_path(node: Node, delimiter='^') -> str:
     name = node.get('name')
     if not name:
@@ -182,10 +188,11 @@ def construct_path(node: Node, delimiter='^') -> str:
         return f'{extra}{delimiter}{name}'
     return name
 
+
 def construct_tree(data: list[str], delimiter='^') -> Root:
-    '''
+    """
     This function goes through the config file and constructs the tree every leaf of which is a config section.
-    '''
+    """
     root = Root(name='root', version='', children=[], stubs=[], delimiter=delimiter)
     current_node: Root | Node = root
     section_regexp = r'^([^{]+)\s{'
@@ -197,6 +204,11 @@ def construct_tree(data: list[str], delimiter='^') -> Root:
             if not m:
                 raise Exception('Incorrect configuration format detected.')
             section_name = m.group(1)
+            if 'inactive: ' in section_name:
+                section_name = section_name.replace('inactive: ', '', 1)
+            if 'protect: ' in section_name:
+                section_name = section_name.replace('protect: ', '', 1)
+            section_name = section_name.strip()
             node = Node(
                 name=section_name,
                 parent=current_node,
@@ -204,14 +216,10 @@ def construct_tree(data: list[str], delimiter='^') -> Root:
                 stubs=[],
                 path='',
                 is_closed=False,
-                is_inactive=False,
-                is_protected=False,
+                is_inactive='inactive: ' in m.group(1),
+                is_protected='protect: ' in m.group(1),
             )
             node['path'] = construct_path(node, delimiter).replace(f'root{delimiter}', '')
-            if section_name.startswith('inactive: '):
-                node['is_inactive'] = True
-            if 'protect: ' in section_name:
-                node['is_protected'] = True
             current_node['children'].append(node)
             current_node = node
         elif '}' in stripped and '{' not in stripped and ';' not in stripped:
@@ -228,6 +236,7 @@ def construct_tree(data: list[str], delimiter='^') -> Root:
                 if len(parts) == 2:
                     root['version'] = parts[1]
     return root
+
 
 def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
     step = path.popleft()
@@ -247,8 +256,6 @@ def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
     for child in children:
         name = child['name']
         name = name.lower()
-        if name.startswith('inactive: '):
-            name = name.replace('inactive: ', '')
         if name == step:
             if not path:
                 return child
@@ -260,14 +267,15 @@ def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
         path.appendleft(f'{step} {extra_step}')
         return search_node(path, node)
 
-def compare_nodes(target: Root | Node, peer: Root | Node) -> Root | Node:
 
+def compare_nodes(target: Root | Node, peer: Root | Node) -> Root | Node:
     def copy_node(type: str, origin: Node, parent: Root | Node) -> Node:
         node: Node = copy(origin)
         node['type'] = type
         node['parent'] = parent
         node['children'] = []
         return node
+
     if target['name'] != peer['name']:
         raise Exception('Nodes are not on the same level.')
     new_target = copy(target)
@@ -288,6 +296,17 @@ def compare_nodes(target: Root | Node, peer: Root | Node) -> Root | Node:
     for child in peers_children:
         copied_child = copy_node('lost', child, new_target)
         new_target['children'].append(copied_child)
+    if new_target['name'] != 'root':
+        if new_target['is_protected'] != peer['is_protected']:
+            if new_target['is_protected']:
+                new_target['name'] = 'protect:(-) ' + new_target['name']
+            else:
+                new_target['name'] = 'protect:(+): ' + new_target['name']
+        if new_target['is_inactive'] != peer['is_inactive']:
+            if new_target['is_inactive']:
+                new_target['name'] = 'inactive:(-) ' + new_target['name']
+            else:
+                new_target['name'] = 'inactive:(+): ' + new_target['name']
     ts = set(target['stubs'])
     ps = set(peer['stubs'])
     new_target['diff'] = []
@@ -297,6 +316,7 @@ def compare_nodes(target: Root | Node, peer: Root | Node) -> Root | Node:
         return {}
     return new_target
 
+
 def search_inactives(tree: Root | Node) -> Root | Node:
     new_tree = copy(tree)
     new_tree['children'] = []
@@ -304,13 +324,14 @@ def search_inactives(tree: Root | Node) -> Root | Node:
         if node := search_inactives(child):
             new_tree['children'].append(node)
             node['parent'] = new_tree
-    inactives = [x for x in filter(lambda x: x.startswith('inactive:'), tree['stubs'])]
+    inactives = [x for x in filter(lambda x: x.startswith('inactive: '), tree['stubs'])]
     if tree['name'] != 'root' and not tree['is_inactive'] and not inactives:
         if new_tree['children']:
             return new_tree
         return {}
     new_tree['inactives'] = inactives
     return new_tree
+
 
 def draw_diff_tree(tree: Root | Node, start: str) -> Generator[str, None, None]:
     if tree['name'] != start:
@@ -333,9 +354,15 @@ def draw_diff_tree(tree: Root | Node, start: str) -> Generator[str, None, None]:
         if tree['name'] != start:
             yield '}'
 
+
 def draw_inactive_tree(tree: Root | Node, start: str) -> Generator[str, None, None]:
     if tree['name'] != start:
-        yield f'{tree["name"]} {{'
+        if tree['name'] == 'root':
+            yield tree['name']
+        elif tree['is_inactive']:
+            yield f'inactive: {tree["name"]} {{'
+        else:
+            yield f'{tree["name"]} {{'
     for child in tree['children']:
         for x in draw_inactive_tree(child, start):
             yield x
@@ -343,6 +370,7 @@ def draw_inactive_tree(tree: Root | Node, start: str) -> Generator[str, None, No
         yield stub
     if tree['name'] != start:
         yield '}'
+
 
 def make_path(line_path: str) -> deque[str]:
     return deque(line_path.split())
