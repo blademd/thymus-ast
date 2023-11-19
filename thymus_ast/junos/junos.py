@@ -32,6 +32,27 @@ class Node(TypedDict):
     is_protected: bool
 
 
+def unstrict_compare(left: list[str], right: list[str]) -> bool:
+    """
+    Function compares the two lists and returns True whether they are equal.
+    For every list element, an extra argument is accounted for to cover cases
+        when these elements are inactive and/or protected.
+    """
+    if len(left) != len(right):
+        return False
+    dleft = deque(left)
+    dright = deque(right)
+    extra_pattern = r'(?:inactive: |protect: ){1,2}'
+    while True:
+        lml = dleft.popleft()
+        lmr = dright.popleft()
+        if lml == lmr or re.match(extra_pattern + lml, lmr) or re.match(extra_pattern + lmr, lml):
+            if dleft or dright:
+                continue
+            return True
+        return False
+
+
 def parser(data: list[str], path: str, *, delimiter='^', is_greedy=False) -> tuple[list[str], list[str]]:
     sections: list[str] = []
     params: list[str] = []
@@ -45,7 +66,7 @@ def parser(data: list[str], path: str, *, delimiter='^', is_greedy=False) -> tup
         if '{' in stripped and '}' not in stripped and ';' not in stripped:
             sections.append(stripped)
         elif '}' in stripped and '{' not in stripped and ';' not in stripped:
-            if parts == [x[:-2] for x in sections]:
+            if len(parts) == len(sections) and unstrict_compare(parts, [x[:-2] for x in sections]):
                 if container:
                     container.append('}')
                     end = number
@@ -54,9 +75,11 @@ def parser(data: list[str], path: str, *, delimiter='^', is_greedy=False) -> tup
                 return container, params
             sections.pop()
         elif ';' in stripped and '{' not in stripped and '}' not in stripped:
-            if parts == [x[:-2] for x in sections]:
+            if len(parts) == len(sections) and unstrict_compare(parts, [x[:-2] for x in sections]):
                 params.append(stripped)
-        if parts == [x[:-2] for x in sections[:plen]]:
+        else:
+            continue
+        if len(sections) >= len(parts) and unstrict_compare(parts, [x[:-2] for x in sections[:plen]]):
             if stripped and not ('{' in stripped and '}' in stripped):
                 if not start:
                     start = number
@@ -73,10 +96,10 @@ def lazy_parser(data: Iterable[str], path: str, delimiter='^') -> Generator[str,
         if '{' in stripped and '}' not in stripped and ';' not in stripped:
             sections.append(stripped)
         elif '}' in stripped and '{' not in stripped and ';' not in stripped:
-            if parts == [x[:-2] for x in sections]:
+            if len(parts) == len(sections) and unstrict_compare(parts, [x[:-2] for x in sections]):
                 return
             sections.pop()
-        if parts == [x[:-2] for x in sections[:plen]]:
+        if len(sections) >= plen and unstrict_compare(parts, [x[:-2] for x in sections[:plen]]):
             if stripped and not ('{' in stripped and '}' in stripped):
                 yield stripped
 
@@ -84,6 +107,11 @@ def lazy_parser(data: Iterable[str], path: str, delimiter='^') -> Generator[str,
 def wc_parser(
     data: list[str], path: str, pattern: str, delimiter='^'
 ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    if pattern.startswith('^'):
+        pattern = pattern[1:]
+        if not pattern:
+            return {}, {}
+    pattern = r'^(?:inactive: |protect: ){1,2}' + pattern
     sections: list[str] = []
     container: dict[str, list[str]] = {}
     params: dict[str, list[str]] = {}
@@ -121,6 +149,11 @@ def wc_parser(
 
 
 def lazy_wc_parser(data: Iterable[str], path: str, pattern: str, delimiter='^') -> Generator[str, None, None]:
+    if pattern.startswith('^'):
+        pattern = pattern[1:]
+        if not pattern:
+            return
+    pattern = r'^(?:inactive: |protect: ){1,2}' + pattern
     sections: list[str] = []
     parts: list[str] = path.split(delimiter) if path else []
     plen = len(parts)
