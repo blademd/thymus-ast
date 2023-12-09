@@ -230,7 +230,12 @@ def construct_tree(data: list[str], delimiter='^') -> Root:
     current_node: Root | Node = root
     section_regexp = r'^([^{]+)\s{'
     stub_regexp = r'^([^;]+;)'
+    bom_symbol = '\ufeff'
     for line in data:
+        if bom_symbol in line:
+            # in case, when file is UTF-8 encoded with BOM
+            # but opened with UTF-8 encoding and errors ignoring mode
+            line = line.replace(bom_symbol, '')
         stripped = line.strip()
         if '{' in stripped and '}' not in stripped and ';' not in stripped:
             m = re.search(section_regexp, stripped)

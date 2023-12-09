@@ -37,6 +37,7 @@ class Root:
     end: int
     is_accessible: bool
 
+
 @dataclass
 class Node:
     name: str
@@ -57,10 +58,12 @@ def read_config(filename: str, encoding='utf-8-sig') -> list[str]:
     except FileNotFoundError:
         return []
 
+
 def get_spaces(line: str) -> int:
     if m := re.search(r'^(\s+)', line):
         return len(m.group(1))
     return 0
+
 
 def check_child(name: str, children: list[Node]) -> Optional[Node]:
     for child in children:
@@ -68,13 +71,14 @@ def check_child(name: str, children: list[Node]) -> Optional[Node]:
             return child
     return None
 
+
 def make_nodes(path: str, parent: Root | Node, delimiter: str) -> Node:
     parts = path.split()
     current: Root | Node = parent
     for number, elem in enumerate(parts):
         child = check_child(elem, current.children)
         if not child:
-            xpath = f'{delimiter}'.join(parts[:number + 1])
+            xpath = f'{delimiter}'.join(parts[: number + 1])
             if parent.name != 'root':
                 xpath = f'{parent.path}{delimiter}{xpath}'
             new_node = Node(elem, xpath, current, [], [], [], 0, 0, False)
@@ -84,6 +88,7 @@ def make_nodes(path: str, parent: Root | Node, delimiter: str) -> Node:
             current = child
     current.is_accessible = True
     return current
+
 
 def step_back(node: Node, steps: int) -> Node:
     current: Node | Root = node
@@ -101,6 +106,7 @@ def step_back(node: Node, steps: int) -> Node:
     offset = (steps + 1) * -1
     return reverse[offset]
 
+
 def chop_tree(node: Node) -> None:
     marked: list[int] = []
     for number, child in enumerate(node.heuristics):
@@ -108,6 +114,7 @@ def chop_tree(node: Node) -> None:
             marked.append(number)
     for number in reversed(marked):
         del node.heuristics[number]
+
 
 def heuristics_parse(node: Root | Node, delimiter: str, is_crop: bool) -> None:
     if not node.stubs:
@@ -126,29 +133,27 @@ def heuristics_parse(node: Root | Node, delimiter: str, is_crop: bool) -> None:
         for number, elem in enumerate(parts):
             child = check_child(elem, current.heuristics)
             if not child:
-                xpath = f'{delimiter}'.join(parts[:number + 1])
+                xpath = f'{delimiter}'.join(parts[: number + 1])
                 if node.name != 'root':
                     xpath = f'{node.path}{delimiter}{xpath}'
                 new_node = Node(elem, xpath, current, [], [], [], 0, 0, False)
                 if is_crop:
-                    new_node.stubs.append(' '.join(parts[number + 1:]))
+                    new_node.stubs.append(' '.join(parts[number + 1 :]))
                 else:
                     new_node.stubs.append(stub)
                 current.heuristics.append(new_node)
                 current = new_node
             else:
                 if is_crop:
-                    child.stubs.append(' '.join(parts[number + 1:]))
+                    child.stubs.append(' '.join(parts[number + 1 :]))
                 else:
                     child.stubs.append(stub)
                 current = child
     chop_tree(node)
 
+
 def recursive_node_lookup(
-        node: Root | Node,
-        is_child: bool,
-        callback: Callable[[Node, Any], None],
-        **kwargs: Any
+    node: Root | Node, is_child: bool, callback: Callable[[Node, Any], None], **kwargs: Any
 ) -> None:
     target: list[Node] = node.children if is_child else node.heuristics
     for child in target:
@@ -157,12 +162,9 @@ def recursive_node_lookup(
             recursive_node_lookup(child, is_child, callback, **kwargs)
         callback(child, **kwargs)
 
+
 def lazy_provide_config(
-        config: list[str],
-        node: Root | Node,
-        *,
-        alignment: int,
-        is_started: bool = False
+    config: list[str], node: Root | Node, *, alignment: int, is_started: bool = False
 ) -> Generator[str, None, None]:
     if not node.is_accessible:
         return
@@ -209,11 +211,12 @@ def lazy_provide_config(
     except IndexError:
         return
 
+
 def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
-    '''
+    """
     This function searches for a node based on the path argument.
     It also eats the path from its head.
-    '''
+    """
     step = path.popleft()
     for child in node.children:
         if child.name.lower() == step.lower():
@@ -225,11 +228,12 @@ def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
             return search_node(path, child)
     return None
 
+
 def search_h_node(path: deque[str], node: Root | Node) -> Optional[Node]:
-    '''
+    """
     This function searches for a heuristic node based on the path argument.
     It also eats the path from its head.
-    '''
+    """
     step = path.popleft()
     for child in node.heuristics:
         if child.name.lower() == step.lower():
@@ -238,18 +242,19 @@ def search_h_node(path: deque[str], node: Root | Node) -> Optional[Node]:
             return search_h_node(path, child)
     return None
 
+
 def analyze_heuristics(root: Root, delimiter: str, is_crop: bool) -> None:
-    '''
+    """
     This function analyzes all stubs lists from the root down to the bottom and aggregates common parts
         to new sections inside heuristics list.
     `is_crop` allows a user to save only the unique parts of a stub string.
-    '''
+    """
     heuristics_parse(root, delimiter=delimiter, is_crop=is_crop)
     recursive_node_lookup(root, is_child=False, callback=chop_tree)
     recursive_node_lookup(root, is_child=True, callback=heuristics_parse, delimiter=delimiter, is_crop=is_crop)
 
-def analyze_sections(root: Root, delimiter: str, cache: list[tuple[int, str]]) -> None:
 
+def analyze_sections(root: Root, delimiter: str, cache: list[tuple[int, str]]) -> None:
     def __get_begin_end(children: list[Node]) -> tuple[int, int]:
         begin: int = -1
         end: int = -1
@@ -288,6 +293,7 @@ def analyze_sections(root: Root, delimiter: str, cache: list[tuple[int, str]]) -
                     rm.end = end
                     rm.is_accessible = True
 
+
 def construct_tree(
     config: list[str],
     *,
@@ -295,7 +301,7 @@ def construct_tree(
     is_heuristics: bool = False,
     is_base_heuristics: bool = False,
     is_crop: bool = False,
-    is_promisc: bool = False
+    is_promisc: bool = False,
 ) -> Optional[Root]:
     current: Root | Node = Root(
         name='root',
@@ -307,8 +313,9 @@ def construct_tree(
         stubs=[],
         begin=0,
         end=0,
-        is_accessible=True
+        is_accessible=True,
     )
+    bom_symbol = '\ufeff'
     prev_line: str = ''
     step: int = 0  # step tells how deep the next section is
     final: int = 0
@@ -322,9 +329,20 @@ def construct_tree(
             return None
     config.append('!\n')  # for the cases when the last section is not properly closed
     s_cache: list[tuple[int, str]] = []
+    skip_mode: bool = True  # to skip lines preceding the version keyword
+    c_block: bool = False  # to stop adding stubs and start accumulating c_buffer
+    c_buffer: str = ''
     # LOOKAHEAD ALGO
     for number, line in enumerate(config):
         final = number
+        if bom_symbol in line:
+            # in case, when file is UTF-8 encoded with BOM
+            # but opened with UTF-8 encoding and errors ignoring mode
+            line = line.replace(bom_symbol, '')
+        if skip_mode and line.startswith('version '):
+            skip_mode = False
+        if skip_mode:
+            continue
         line = line.rstrip()
         if not line:
             continue
@@ -337,33 +355,62 @@ def construct_tree(
             step = spaces - prev_spaces
             current = make_nodes(prev_line.strip(), current, delimiter)
             current.begin = number
-            current.depth = spaces - prev_spaces
         elif spaces < prev_spaces:
             if not step:
                 continue
             stripped = prev_line.strip()
-            if not stripped.startswith('!') and stripped not in STOP_LIST:
+            if not c_block and not stripped.startswith('!') and stripped not in STOP_LIST:
                 current.stubs.append(stripped)
+            # If the last line of a section is found during inside_block
+            # it must contain ^C
+            if c_block:
+                if stripped.endswith('^C'):
+                    c_buffer += stripped
+                    current.stubs.append(c_buffer)
+                    c_buffer = ''
+                    c_block = False
+                else:
+                    return None
             current.end = number
             temp = current
             current = step_back(current, (prev_spaces - spaces) // step)
             if current.name == 'root':
-                last_end: int = temp.end
+                last_end = temp.end
                 while temp.name != 'root':
                     if temp.is_accessible and not temp.end:
                         temp.end = last_end
                     temp = temp.parent
         else:
             stripped = prev_line.strip()
-            if not stripped.startswith('!') and stripped not in STOP_LIST:
-                current.stubs.append(stripped)
-                if current.name == 'root' and is_base_heuristics and re.search(SA_REGEXP, stripped):
-                    s_cache.append((number, stripped))
-                    current.stubs = current.stubs[:-1]
-            if current.name == 'root' and stripped.startswith('version '):
-                if len((parts := stripped.split())) == 2:
-                    current.version = parts[1]
+            if not c_block:
+                if not stripped.startswith('!') and stripped not in STOP_LIST:
+                    if stripped.endswith('^C'):
+                        c_block = True
+                        c_buffer = stripped
+                    else:
+                        current.stubs.append(stripped)
+                        if current.name == 'root' and is_base_heuristics and re.search(SA_REGEXP, stripped):
+                            s_cache.append((number, stripped))
+                            current.stubs = current.stubs[:-1]
+                if current.name == 'root' and stripped.startswith('version '):
+                    parts = stripped.split()
+                    if len(parts) == 2:
+                        current.version = parts[1]
+            else:
+                if stripped.endswith('^C'):
+                    c_buffer += '\n'
+                    c_buffer += stripped
+                    current.stubs.append(c_buffer)
+                    c_buffer = ''
+                    c_block = False
+                else:
+                    c_buffer += '\n'
+                    c_buffer += stripped
         prev_line = line
+    if skip_mode:
+        # If all passes through the config don't turn this flag off
+        # That means the tree is empty.
+        return None
     current.end = final
     if current.name != 'root':
         return None
