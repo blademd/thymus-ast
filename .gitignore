@@ -3,6 +3,14 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# VSCode fodler
+.vscode/
+
+# Text files, configs
+*.txt
+*.conf
+*.cfg
+
 # C extensions
 *.so
 

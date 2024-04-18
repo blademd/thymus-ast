@@ -90,21 +90,19 @@ def make_nodes(path: str, parent: Root | Node, delimiter: str) -> Node:
     return current
 
 
-def step_back(node: Node, steps: int) -> Node:
+def step_back(node: Node, config: list[str], steps: int) -> Optional[Root | Node]:
     current: Node | Root = node
-    reverse: list[Node] = []
     while True:
-        if current.name == 'root':
+        if type(current) is Root:
             break
+        assert type(current) is Node
         current = current.parent
         if current.is_accessible:
-            reverse.append(current)
-    if len(reverse) == 1 and reverse[0].name == 'root':
-        return reverse[0]
-    if len(reverse) <= steps:
-        return reverse[-1]
-    offset = (steps + 1) * -1
-    return reverse[offset]
+            line = config[current.begin - 1][:-1]
+            spaces = get_spaces(line)
+            if steps > spaces:
+                return current
+    return None
 
 
 def chop_tree(node: Node) -> None:
@@ -315,6 +313,7 @@ def construct_tree(
         end=0,
         is_accessible=True,
     )
+    root = current
     bom_symbol = '\ufeff'
     prev_line: str = ''
     step: int = 0  # step tells how deep the next section is
@@ -373,7 +372,15 @@ def construct_tree(
                     return None
             current.end = number
             temp = current
-            current = step_back(current, (prev_spaces - spaces) // step)
+            if current.name == 'root':
+                return None
+            if not spaces:
+                # We are definitely heading the root
+                current = root
+            else:
+                current = step_back(current, config, prev_spaces - step)
+            if not current:
+                return None
             if current.name == 'root':
                 last_end = temp.end
                 while temp.name != 'root':
