@@ -6,17 +6,15 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Any
 from collections import deque
+from copy import copy
 
 if sys.version_info.major == 3 and sys.version_info.minor >= 9:
-    from collections.abc import Generator, Callable
+    from collections.abc import Generator, Callable, Iterator
 else:
-    from typing import Generator, Callable
+    from typing import Generator, Callable, Iterator
 
 
-STOP_LIST = (
-    'exit-address-family',
-    'end',
-)
+STOP_LIST = ('exit-address-family', 'endif', 'end-policy', 'end-set')
 SA_REGEXP = r'^route-map\s|^interface\s'
 SA_SECTIONS = (
     'route-map',
@@ -37,6 +35,31 @@ class Root:
     end: int
     is_accessible: bool
 
+    def __repr__(self) -> str:
+        r = 'Root:\n'
+        r += f'\tVersion: {self.version if self.version else "unset"}\n'
+        r += f'\tDelimiter: {self.delimiter}\n'
+        r += f'\tBegins at: {self.begin}\n'
+        r += f'\tEnds at: {self.end}\n'
+        r += f'\tNumber of children: {len(self.children)}\n'
+        r += f'\tNumber of stubs: {len(self.stubs)}\n'
+        r += f'\tNumber of heuristic nodes: {len(self.heuristics)}'
+        return r
+
+    def __eq__(self, value: object) -> bool:
+        if type(value) is Root:
+            if value.name == self.name:
+                return True
+
+        return False
+
+    def __getitem__(self, key: str) -> Node:
+        for child in self.children:
+            if child.name == key:
+                return child
+
+        raise KeyError
+
 
 @dataclass
 class Node:
@@ -49,6 +72,55 @@ class Node:
     begin: int
     end: int
     is_accessible: bool
+
+    def __repr__(self) -> str:
+        r = 'Node:\n'
+        r += f'\tName: {self.name}\n'
+        r += f'\tPath: {self.path}\n'
+        r += f'\tBegins at: {self.begin}\n'
+        r += f'\tEnds at: {self.end}\n'
+        r += f'\tNumber of children: {len(self.children)}\n'
+        r += f'\tNumber of stubs: {len(self.stubs)}\n'
+        r += f'\tIs accessible: {self.is_accessible}\n'
+        r += f'\tNumber of heuristic nodes: {len(self.heuristics)}'
+        return r
+
+    def __eq__(self, value: object) -> bool:
+        if type(value) is Node:
+            if value.name == self.name:
+                return True
+
+        return False
+
+    def __getitem__(self, key: str) -> Node:
+        for child in self.children:
+            if child.name == key:
+                return child
+
+        raise KeyError
+
+
+@dataclass
+class TreeSettings:
+    heuristics: bool
+    base_heuristics: bool
+    crop: bool
+    promisc: bool
+    find_head: bool
+    delimiter: str
+
+    def __repr__(self) -> str:
+        r = f'Heuristics: {self.heuristics}\n'
+        r += f'Base heuristics: {self.base_heuristics}\n'
+        r += f'Crop: {self.crop}\n'
+        r += f'Promisc: {self.promisc}\n'
+        r += f'Find head: {self.find_head}\n'
+        r += f'Delimiter: {self.delimiter}'
+
+        return r
+
+
+DEFAULT_SETTINGS = TreeSettings(False, True, False, False, False, '^')
 
 
 def read_config(filename: str, encoding='utf-8-sig') -> list[str]:
@@ -121,6 +193,7 @@ def heuristics_parse(node: Root | Node, delimiter: str, is_crop: bool) -> None:
         parts: list[str] = []
         if stub.startswith('no '):
             parts = stub[3:].split()
+            parts.insert(1, 'no')
         elif re.match(r'^\d+\s', stub):
             parts = re.sub(r'^\d+\s', '', stub).split()
         else:
@@ -166,24 +239,26 @@ def lazy_provide_config(
 ) -> Generator[str, None, None]:
     if not node.is_accessible:
         return
+
     try:
-        begin: int = 0
-        end: int = node.end + 1
+        begin = node.begin
+        end = node.end + 1
+
         if node.name != 'root':
+            # to show the section name
             begin = node.begin - 1
+
         if config[end - 1].strip() != '!' and not config[end - 1].strip().startswith('exit-'):
             # some sections don't stop at '!' or 'exit-...' lines
             # they can overlap with the next section
             end -= 1
+
         depth: int = 0
         prev_spaces: int = 0
+
         for pos in range(begin, end):
-            if not config[pos]:
-                continue
-            elif config[pos] == '\n':
-                yield config[pos]
-                continue
             spaces = get_spaces(config[pos])
+
             if not is_started:
                 if spaces > 0:
                     yield config[pos].strip()
@@ -210,20 +285,26 @@ def lazy_provide_config(
         return
 
 
-def search_node(path: deque[str], node: Root | Node) -> Optional[Node]:
+def search_node(path: deque[str], node: Root | Node, *, accessibility=True) -> Optional[Node]:
     """
     This function searches for a node based on the path argument.
     It also eats the path from its head.
     """
     step = path.popleft()
+
     for child in node.children:
         if child.name.lower() == step.lower():
             if not path:
-                if child.is_accessible:
-                    return child
+                if accessibility:
+                    if child.is_accessible:
+                        return child
+                    else:
+                        return None
                 else:
-                    return None
-            return search_node(path, child)
+                    return child
+            else:
+                return search_node(path, child)
+
     return None
 
 
@@ -292,6 +373,111 @@ def analyze_sections(root: Root, delimiter: str, cache: list[tuple[int, str]]) -
                     rm.is_accessible = True
 
 
+def compare_nodes(target: Root | Node, peer: Root | Node) -> Optional[Root | Node]:
+    if target != peer:
+        return None
+
+    copied_target = copy(target)
+    copied_target.children = []
+    copied_target.stubs = []
+
+    peer_children = copy(peer.children)
+
+    for child in target.children:
+        if child in peer.children:
+            peer_children.remove(peer[child.name])
+
+            if next_node := compare_nodes(child, peer[child.name]):
+                assert type(next_node) is Node
+                next_node.parent = copied_target
+                copied_target.children.append(next_node)
+        else:
+            copied_child = copy(child)
+            copied_child.name = '+' + child.name
+            copied_child.parent = copied_target
+            copied_child.stubs = []
+
+            copied_target.children.append(copied_child)
+
+    for child in peer_children:
+        copied_child = copy(child)
+        copied_child.name = '-' + child.name
+        copied_child.parent = copied_target
+        copied_child.stubs = []
+
+        copied_target.children.append(copied_child)
+
+    target_stubs = set(target.stubs)
+    peer_stubs = set(peer.stubs)
+
+    copied_target.stubs.extend(list('+' + x for x in target_stubs - peer_stubs))
+    copied_target.stubs.extend(list('-' + x for x in peer_stubs - target_stubs))
+
+    if copied_target.stubs or copied_target.children:
+        return copied_target
+
+    return None
+
+
+def make_path(str_path: str, *, delimiter='^') -> deque[str]:
+    return deque(str_path.split(delimiter))
+
+
+def lazy_provide_compare(node: Root | Node, *, delimiter='^', alignment=1) -> Iterator[str]:
+    def last_accessible(node: Node) -> Root | Node:
+        current: Root | Node = node
+
+        while True:
+            assert type(current) is Node
+            current = current.parent
+
+            if type(current) is Root or current.is_accessible:
+                return current
+
+    def inner_routine(node: Root | Node, *, sign: str, step: int) -> Iterator[str]:
+        if not node.is_accessible:
+            for child in node.children:
+                inner_sign = sign
+
+                if child.name[0] in ('+', '-'):
+                    inner_sign = child.name[0]
+
+                yield from inner_routine(child, sign=inner_sign, step=step)
+            return
+
+        path = node.path
+
+        if type(node) is Node:
+            parent = last_accessible(node)
+            path = path.replace(parent.path, '', 1)
+
+        path = path.replace(delimiter, ' ')
+        path = path.strip()
+
+        if path:
+            yield ' ' * step + sign + path
+
+        for child in node.children:
+            inner_sign = sign
+
+            if child.name[0] in ('+', '-'):
+                inner_sign = child.name[0]
+
+            yield from inner_routine(child, sign=inner_sign, step=step + alignment)
+
+        for stub in node.stubs:
+            if stub.startswith('+') or stub.startswith('-'):
+                if path:
+                    yield ' ' * (step + alignment) + stub
+                else:
+                    yield stub
+
+        if path:
+            yield ' ' * step + sign + '!'
+
+    yield from inner_routine(node, sign='', step=-1)
+
+
 def construct_tree(
     config: list[str],
     *,
@@ -326,7 +512,8 @@ def construct_tree(
                 break
         else:
             return None
-    config.append('!\n')  # for the cases when the last section is not properly closed
+    else:
+        config.append('!\n')  # for the cases when the last section is not properly closed
     s_cache: list[tuple[int, str]] = []
     skip_mode: bool = True  # to skip lines preceding the version keyword
     c_block: bool = False  # to stop adding stubs and start accumulating c_buffer
@@ -425,4 +612,229 @@ def construct_tree(
         analyze_heuristics(current, delimiter, is_crop)
     if is_base_heuristics:
         analyze_sections(current, delimiter, s_cache)
+    # if is_promisc:
+    #     config.pop()
     return current
+
+
+def make_default_root(delimiter: str) -> Root:
+    return Root(
+        name='root',
+        version='',
+        delimiter=delimiter,
+        path='',
+        children=[],
+        heuristics=[],
+        stubs=[],
+        begin=0,
+        end=0,
+        is_accessible=True,
+    )
+
+
+def validate_config(data: list[str]) -> bool:
+    version_found = False
+    end_found = False
+
+    for line in data:
+        stripped = line.strip()
+
+        if stripped.startswith('version '):
+            if end_found:
+                # version cannot be present after the end statement
+                return False
+            version_found = True
+        elif stripped == 'end':
+            end_found = True
+
+    return version_found and end_found
+
+
+def find_head(data: list[str]) -> int:
+    for line_no, line in enumerate(data):
+        stripped = line.strip()
+
+        if not stripped:
+            continue
+
+        if not stripped.startswith('!'):
+            return line_no
+
+    return 0
+
+
+def fix_tail(data: list[str]) -> None:
+    last_line_no = len(data) - 1
+
+    for line_no in range(last_line_no, -1, -1):
+        line = data[line_no]
+
+        if not line.strip():
+            continue
+
+        if get_spaces(line):
+            data.append('end')
+
+        return
+
+
+def construct_tree_second(data: list[str], *, settings: Optional[TreeSettings] = None) -> Optional[Root]:
+    if not settings:
+        settings = DEFAULT_SETTINGS
+
+    root = make_default_root(settings.delimiter)
+    current_node: Root | Node = root
+
+    bom_symbol = '\ufeff'
+    prev_line = ''
+    c_block_buf = ''
+
+    step = 0
+
+    skip_extra_lines = False
+    inside = False
+    inside_c_block = False
+
+    cache: list[tuple[int, str]] = []
+
+    # Every config must start with the "version" keyword & end with the "end" one until the "promisc" is set.
+    # If data is valid we set the "skip_extra_lines" to ignore all lines preceding the "version" and stop at the "end".
+    # With the "promisc" is set we consider all possible lines...
+    # but we need to be sure that they end with a line with no leading spaces to close the root node properly.
+
+    if not settings.promisc:
+        if not validate_config(data):
+            return None
+        else:
+            skip_extra_lines = True
+    else:
+        fix_tail(data)
+
+        if settings.find_head:
+            root.begin = find_head(data)
+
+    for line_num, line in enumerate(data):
+        if skip_extra_lines:
+            if (ver_line := line.strip()).startswith('version '):
+                root.begin = line_num
+                inside = True
+
+                parts = ver_line.split()
+
+                if len(parts) == 2:
+                    root.version = parts[1]
+
+        if skip_extra_lines and not inside:
+            continue
+
+        if bom_symbol in line:
+            line = line.replace(bom_symbol, '')
+
+        line = line.rstrip()
+
+        if not line:
+            continue
+
+        if not prev_line:
+            prev_line = line
+            continue
+
+        if line == 'end':
+            inside = False
+            break
+
+        prev_spaces = get_spaces(prev_line)
+        spaces = get_spaces(line)
+
+        if spaces > prev_spaces:
+            step = spaces - prev_spaces
+            current_node = make_nodes(prev_line.strip(), current_node, delimiter=settings.delimiter)
+            current_node.begin = line_num
+        elif spaces < prev_spaces:
+            if not step:
+                continue
+
+            stripped = prev_line.strip()
+
+            if not inside_c_block:
+                if stripped not in STOP_LIST and not stripped.startswith('!'):
+                    current_node.stubs.append(stripped)
+            else:
+                # If the last line of a section is found during inside_block
+                # it must contain ^C
+                if stripped.endswith('^C'):
+                    c_block_buf += '\n'
+                    c_block_buf += stripped
+                    current_node.stubs.append(c_block_buf)
+
+                    c_block_buf = ''
+                    inside_c_block = False
+                else:
+                    # Error condition
+                    return None
+
+            current_node.end = line_num
+
+            if spaces:
+                if not isinstance(current_node, Node):
+                    return None
+
+                prev_node = step_back(current_node, data, prev_spaces - step)
+
+                if not prev_node:
+                    return None
+
+                current_node = prev_node
+            else:
+                current_node = root
+
+            temp = current_node
+
+            while temp.name != 'root':
+                if temp.is_accessible:
+                    temp.end = line_num
+                temp = temp.parent  # type: ignore
+        else:
+            stripped = prev_line.strip()
+
+            if not inside_c_block:
+                if stripped not in STOP_LIST and not stripped.startswith('!'):
+                    if stripped.endswith('^C'):
+                        inside_c_block = True
+                        c_block_buf = stripped
+                    else:
+                        current_node.stubs.append(stripped)
+
+                        if current_node.name == 'root' and settings.base_heuristics:
+                            if re.search(SA_REGEXP, stripped):
+                                cache.append((line_num, stripped))
+                                current_node.stubs.pop()
+            else:
+                if stripped.endswith('^C'):
+                    c_block_buf += '\n'
+                    c_block_buf += stripped
+                    current_node.stubs.append(c_block_buf)
+
+                    c_block_buf = ''
+                    inside_c_block = False
+                else:
+                    c_block_buf += '\n'
+                    c_block_buf += stripped
+
+        prev_line = line
+
+    root.end = line_num
+
+    if not settings.promisc and inside:
+        return None
+
+    if not root.children and not root.stubs:
+        return None
+
+    if settings.heuristics:
+        analyze_heuristics(root, settings.delimiter, settings.crop)
+
+    if settings.base_heuristics:
+        analyze_sections(root, settings.delimiter, cache)
+
+    return root

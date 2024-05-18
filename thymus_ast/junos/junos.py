@@ -1,3 +1,10 @@
+"""
+DEPRECATION ALERT!!!
+
+This set of functions is obsolete. I will leave this module here solely for backward compatibility purposes.
+It is not going to be supported any further.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -42,7 +49,7 @@ def unstrict_compare(left: list[str], right: list[str]) -> bool:
         return False
     dleft = deque(left)
     dright = deque(right)
-    extra_pattern = r'(?:inactive: |protect: ){1,2}'
+    extra_pattern = r'(?:inactive: |protect: ){0,2}'
     while True:
         lml = dleft.popleft()
         lmr = dright.popleft()
@@ -109,9 +116,9 @@ def wc_parser(
 ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     if pattern.startswith('^'):
         pattern = pattern[1:]
-        if not pattern:
-            return {}, {}
-    pattern = r'^(?:inactive: |protect: ){1,2}' + pattern
+    if not pattern:
+        return {}, {}
+    pattern = r'^(?:inactive: |protect: ){0,2}' + pattern
     sections: list[str] = []
     container: dict[str, list[str]] = {}
     params: dict[str, list[str]] = {}
@@ -151,9 +158,9 @@ def wc_parser(
 def lazy_wc_parser(data: Iterable[str], path: str, pattern: str, delimiter='^') -> Generator[str, None, None]:
     if pattern.startswith('^'):
         pattern = pattern[1:]
-        if not pattern:
-            return
-    pattern = r'^(?:inactive: |protect: ){1,2}' + pattern
+    if not pattern:
+        return
+    pattern = r'^(?:inactive: |protect: ){0,2}' + pattern
     sections: list[str] = []
     parts: list[str] = path.split(delimiter) if path else []
     plen = len(parts)
