@@ -637,12 +637,15 @@ def validate_config(data: list[str]) -> bool:
     end_found = False
 
     for line in data:
-        if line.startswith('version '):
+        if version_found and end_found:
+            return True
+
+        if line.startswith('version ') and not version_found:
             if end_found:
                 # version cannot be present after the end statement
                 return False
             version_found = True
-        elif line == 'end':
+        elif line.rstrip() == 'end' and not end_found:
             end_found = True
 
     return version_found and end_found
